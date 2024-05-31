@@ -19,100 +19,12 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <errno.h>
-#include "parse.h"
+#include "response.h"
 
 #define ECHO_PORT 9999
 #define BUF_SIZE 4096
 
-const char *_400msg = "HTTP/1.1 400 Bad request\r\n\r\n";
-const char *_404msg = "HTTP/1.1 404 Not Found\r\n\r\n";
-const char *_501msg = "HTTP/1.1 501 Not Implemented\r\n\r\n";
-const char *_505msg = "HTTP/1.1 505 HTTP Version not supported\r\n\r\n";
-const char *ok = "HTTP/1.1 200 OK\r\n";
-
-int check_method(char *method)
-{
-  if (!strcmp(method, "GET"))
-    return 1;
-  if (!strcmp(method, "HEAD"))
-    return 2;
-  if (!strcmp(method, "POST"))
-    return 3;
-  return 0;
-}
-// 读取文件并判断是否成功
-bool read_check(char *src, char *dest)
-{
-
-  FILE *file = fopen(src, 'r');
-  // 从文件末尾偏移，偏移0位
-  fseek(file, 0, SEEK_END);
-  long file_size = ftell(file); // ftell()存储当前文件描述符的读取的偏移位置，这里就是文件末尾
-  int readRet1 = fread(dest, sizeof(char), file_size, file);
-  if (readRet1 < 0)
-  {
-    // read函数失败，可以检查errno来确定失败的原因
-    switch (errno)
-    {
-    case EACCES:
-      printf("Permission denied\n");
-      break;
-    case ENOENT:
-      printf("File does not exist\n");
-      break;
-    case EIO:
-      printf("An I/O error occurred\n");
-      break;
-    default:
-      printf("An unknown error occurred\n");
-      break;
-    }
-    return false;
-  }
-  return true;
-}
-char *handle_request(Request *request, char *buf)
-{
-  if (request == NULL)
-  {
-    // 格式错误
-    strcpy(buf, _400msg);
-  }
-  else if (strcmp(request->http_version, "HTTP/1.1"))
-  {
-    // printf("HTTP%s", request->http_version);
-    strcpy(buf, _505msg);
-  }
-  else if (strcmp(request->http_uri, "/"))
-  {
-    strcpy(buf, _404msg);
-  }
-  else if (check_method(request->http_method) == 1)
-  {
-    // get
-    strcpy(buf, ok);
-    // 读取url指定的文件
-    read_check(request->http_uri, buf + strlen(ok));
-    // TODO 对读取长度进行处理，避免溢出
-  }
-  else if (check_method(request->http_method) == 2)
-  {
-    // head
-    strcpy(buf, ok);
-  }
-  else if (check_method(request->http_method) == 3)
-  {
-    // post
-    strcpy(buf, ok);
-    read_check(request->http_uri, buf + strlen(ok));
-  }
-  else if (!check_method(request->http_method))
-  {
-    // 不支持的请求
-    strcpy(buf, _501msg);
-  }
-  return buf;
-}
+char *dest = "\r\n\r\n";
 int close_socket(int sock)
 {
   if (close(sock))
@@ -121,6 +33,65 @@ int close_socket(int sock)
     return 1;
   }
   return 0;
+}
+int deal_buf(dynamic_buffer *dbuf, size_t readret, int client_sock, int sock, int fd_in, struct sockaddr_in cli_addr)
+{
+  // 读取并处理完整的请求
+  // 发送响应报文
+  // 将不完整的尾巴写会dbuf
+  // 返回请求执行后是否断开连接
+  // 1.读入请求不完整，请求断开连接，服务器问题导致的断开连接
+
+  char *temp, *t = dbuf->buf;
+  dynamic_buffer *reday_to_send_buf = (dynamic_buffer *)malloc(sizeof(dynamic_buffer));
+  init_dynamic_buffer(reday_to_send_buf);
+  while ((t = strstr(temp, dest)) != NULL)
+  {
+    // 取出每一个完整请求
+    dynamic_buffer *each = (dynamic_buffer *)malloc(sizeof(dynamic_buffer));
+    init_dynamic_buffer(each);
+    size_t len = t - temp;
+    append_dynamic_buffer(each, temp, len);
+    append_dynamic_buffer(each, dest, strlen(dest));
+    temp = t + strlen(dest);
+    // 从请求中得到下一步的状态，将即将发送的响应报文写入each
+    int return_value = handle_request(client_sock, sock, each, cli_addr);
+    // 每处理一个请求就发送
+    if (send(client_sock, each->buf, each->current_size, 0) != each->current_size)
+    {
+      // Something is wrong
+      close_socket(client_sock);
+      close_socket(sock);
+      free_dynamic_buffer(each);
+      fprintf(stderr, "ERROR Sending Back to Client\n");
+      return ERROR;
+    }
+    if (return_value == CLOSE || return_value == CLOSE_FROM_CLIENT)
+    {
+      //
+      break;
+    }
+    update_dynamic_buffer(dbuf, temp);
+  }
+  // 确定当前的状态
+  // 没有返回的请求报文
+  if (!reday_to_send_buf->current_size)
+  {
+    free_dynamic_buffer(reday_to_send_buf);
+    return PERSISTENT;
+  }
+  // 发送失败
+  if (send(client_sock, reday_to_send_buf->buf, reday_to_send_buf->current_size, 0) != reday_to_send_buf->current_size)
+  {
+    close_socket(client_sock);
+    close_socket(sock);
+    free_dynamic_buffer(reday_to_send_buf);
+    fprintf(stderr, "Error sending to client.\n");
+    return EXIT_FAILURE;
+  }
+
+  free_dynamic_buffer(reday_to_send_buf);
+  return PERSISTENT;
 }
 
 int main(int argc, char *argv[])
@@ -172,22 +143,22 @@ int main(int argc, char *argv[])
     }
 
     readret = 0;
-
+    dynamic_buffer *dbuf = (dynamic_buffer *)malloc(sizeof(dynamic_buffer));
+    init_dynamic_buffer(dbuf);
+    // 接收处理循环，动态缓冲区是在持续连接情况下为了解决请求过长以及存储多个请求
+    // recv函数的终止条件：1.接收缓冲区中的数据已经被读取完毕2.你指定的接收缓冲区已经被填满
     while ((readret = recv(client_sock, buf, BUF_SIZE, 0)) >= 1)
     {
-      // 进行解析和发送//buf存储收到信息
-      Request *request = parse(buf, readret, 8192);
-      // 根据请求方法处理
+      // 持续连接缓冲区
+      append_dynamic_buffer(dbuf, buf, readret);
+      /* parse requests */
+      // print_dynamic_buffer(dbuf);
 
-      handle_request(request, buf);
-
-      int len = strlen(buf);
-      if (send(client_sock, buf, len, 0) != len)
+      // 进行解析和响应
+      if (deal_buf(dbuf, readret, client_sock, sock, 8192, cli_addr) != PERSISTENT)
       {
-        close_socket(client_sock);
-        close_socket(sock);
-        fprintf(stderr, "Error sending to client.\n");
-        return EXIT_FAILURE;
+        // 决定是否断开在这个端口的连接
+        break;
       }
       memset(buf, 0, BUF_SIZE);
     }
