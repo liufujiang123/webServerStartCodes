@@ -34,8 +34,9 @@ int close_socket(int sock)
   }
   return 0;
 }
-int extract_http_messages(char *request_begin, dynamic_buffer *dbuf, int client_sock)
+int extract_http_messages(char **request_begin, dynamic_buffer *dbuf, int client_sock)
 {
+  fprintf(stderr, "++++++++++++++++++++++++++++++++++\n");
   char *t = dbuf->buf, *temp = dbuf->buf;
   int body_start = 0;
   if ((t = strstr(temp, dest)) == NULL)
@@ -46,12 +47,18 @@ int extract_http_messages(char *request_begin, dynamic_buffer *dbuf, int client_
   body_start = t - temp;
   Request *request = parse(dbuf->buf, t - temp, client_sock);
   // 假设存在Content-Length
-  int body_length = atoi(get_header_value(request, "Content-Length"));
+
+  int body_length = 0;
+  if (get_header_value(request, "Content-Length"))
+  {
+    body_length = atoi(get_header_value(request, "Content-Length"));
+  }
+
   if (body_length + body_start > dbuf->current_size)
   {
     return 0;
   }
-  request_begin = dbuf->buf + body_length + body_start;
+  *request_begin = dbuf->buf + body_length + body_start;
   return 1;
 }
 int deal_buf(dynamic_buffer *dbuf, size_t readret, int client_sock, int sock, int fd_in, struct sockaddr_in cli_addr)
@@ -64,20 +71,23 @@ int deal_buf(dynamic_buffer *dbuf, size_t readret, int client_sock, int sock, in
   //  返回请求执行后是否断开连接
   //  1.请求断开连接 2.服务器问题导致的断开连接
 
-  char *t, *temp = dbuf->buf;
+  char *t = dbuf->buf, *temp = dbuf->buf;
   // while直接退出意味着这个请求不完整
-  while (extract_http_messages(t, dbuf, client_sock))
+  while (extract_http_messages(&t, dbuf, client_sock))
   {
+
     // 取出每一个完整请求(包含请求体)
     dynamic_buffer *each = (dynamic_buffer *)malloc(sizeof(dynamic_buffer));
     init_dynamic_buffer(each);
     size_t len = t - temp;
+
     append_dynamic_buffer(each, temp, len);
     temp = t;
     // 从请求中得到下一步的状态，将即将发送的响应报文写入each
     int return_value = handle_request(client_sock, sock, each, cli_addr);
 
     // 每处理一个请求就发送,即使是关闭连接请求依旧要回复响应报文
+
     if (send(client_sock, each->buf, each->current_size, 0) != each->current_size)
     {
       // Something is wrong
@@ -88,6 +98,7 @@ int deal_buf(dynamic_buffer *dbuf, size_t readret, int client_sock, int sock, in
 
       return ERROR;
     }
+    fprintf(stderr, "Respond Success.\n");
     // 如果是请求报文的问题或者请求报文请求关闭连接
     if (return_value == CLOSE || return_value == CLOSE_FROM_CLIENT)
     {
@@ -148,7 +159,7 @@ int main(int argc, char *argv[])
       fprintf(stderr, "Error accepting connection.\n");
       return EXIT_FAILURE;
     }
-
+    fprintf(stderr, "Connetion setup.\n");
     readret = 0;
     dynamic_buffer *dbuf = (dynamic_buffer *)malloc(sizeof(dynamic_buffer));
     init_dynamic_buffer(dbuf);
@@ -158,12 +169,15 @@ int main(int argc, char *argv[])
     while ((readret = recv(client_sock, buf, BUF_SIZE, 0)) >= 1)
     {
       // 持续连接缓冲区
+      fprintf(stderr, "Received message.\n");
+
       append_dynamic_buffer(dbuf, buf, readret);
 
       // 进行解析和响应
       if (deal_buf(dbuf, readret, client_sock, sock, 8192, cli_addr) != PERSISTENT)
       {
         // 决定是否断开在这个端口的连接
+        fprintf(stderr, "Connetion close.\n");
         memset(buf, 0, BUF_SIZE);
         break;
       }

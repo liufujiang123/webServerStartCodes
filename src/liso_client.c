@@ -26,7 +26,7 @@
 
 int main(int argc, char *argv[])
 {
-  if (argc != 4)
+  if (argc != 3)
   {
     fprintf(stderr, "usage: %s <server-ip> <port>", argv[0]);
     return EXIT_FAILURE;
@@ -63,24 +63,32 @@ int main(int argc, char *argv[])
   char msg[BUF_SIZE];
   while (1)
   {
-    int fd_in = open(argv[3], O_RDONLY);
+    char *find;
+    fgets(msg, BUF_SIZE, stdin);
+    find = strchr(msg, '\n');
+    if (find) // 濡傛灉find涓嶄负绌烘寚閽?
+      *find = '\0';
+    int fd_in = open(msg, O_RDONLY);
     if (fd_in < 0)
     {
       printf("Failed to open the file\n");
       return 0;
     }
     read(fd_in, msg, 8192);
-    int bytes_received;
-    fprintf(stdout, "Sending %s", msg);
+
+    fprintf(stdout, "-----------------------Sending-----------------------\n%s", msg);
 
     send(sock, msg, strlen(msg), 0);
-
+    printf("Request success.\n");
+    printf("Waiting for response.\n");
+    int bytes_received;
     if ((bytes_received = recv(sock, buf, BUF_SIZE, 0)) > 1)
     {
       buf[bytes_received] = '\0';
-      fprintf(stdout, "Received %s", buf);
+      fprintf(stdout, "-----------------------Received-----------------------\n%s", buf);
     }
-    // 提交
+    // 鎻愪氦
+    memset(msg, 0, BUF_SIZE);
   }
 
   freeaddrinfo(servinfo);

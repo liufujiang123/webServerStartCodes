@@ -20,6 +20,7 @@ int handle_request(int client_sock, int my_sock, dynamic_buffer *db, struct sock
 {
   // 除了能正常响应的请求，其余都导致断开连接
   Request *request = parse(db->buf, db->current_size, client_sock);
+
   if (request == NULL)
   {
     // 格式错误
