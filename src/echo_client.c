@@ -72,7 +72,9 @@ int main(int argc, char *argv[])
     read(fd_in, msg, 8192);
     int bytes_received;
     fprintf(stdout, "Sending %s", msg);
+
     send(sock, msg, strlen(msg), 0);
+
     if ((bytes_received = recv(sock, buf, BUF_SIZE, 0)) > 1)
     {
       buf[bytes_received] = '\0';

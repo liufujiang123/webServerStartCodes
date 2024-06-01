@@ -18,6 +18,7 @@ int check_method(char *method)
 }
 int handle_request(int client_sock, int my_sock, dynamic_buffer *db, struct sockaddr_in client_addr)
 {
+  // 除了能正常响应的请求，其余都导致断开连接
   Request *request = parse(db->buf, db->current_size, client_sock);
   if (request == NULL)
   {
@@ -44,31 +45,36 @@ int handle_request(int client_sock, int my_sock, dynamic_buffer *db, struct sock
     // Still --> May be a Post or Get to send msg here.
     return_value = CLOSE_FROM_CLIENT;
   }
-  else if (check_method(request->http_method) == 1)
+
+  if (check_method(request->http_method) == 1)
   {
     // get
-    handle_get(request, db, client_addr, return_value);
+    return_value = handle_get(request, db, client_addr, return_value);
   }
   else if (check_method(request->http_method) == 2)
   {
     // head
-    handle_head(request, db, client_addr, return_value);
+    return_value = handle_head(request, db, client_addr, return_value);
   }
   else if (check_method(request->http_method) == 3)
   {
     // post
-    handle_post(request, db, client_addr, return_value);
+    return_value = handle_post(request, db, client_addr, return_value);
   }
   else if (!check_method(request->http_method))
   {
     // 不支持的请求
     handle_501(db, client_addr);
+    free_request(request);
   }
+
   return return_value;
 }
 
 int handle_get(Request *request, dynamic_buffer *db, struct sockaddr_in client_addr, int return_value)
 {
+  // 把db修改为将要发送的报文，返回决定是否继续连接的状态
+  reset_dynamic_buffer(db);
   dynamic_buffer *url_buf = (dynamic_buffer *)malloc(sizeof(dynamic_buffer *));
   init_dynamic_buffer(url_buf);
   char *end_url;
@@ -91,15 +97,7 @@ int handle_get(Request *request, dynamic_buffer *db, struct sockaddr_in client_a
     free_dynamic_buffer(url_buf);
     return CLOSE;
   }
-  // struct stat file_state;
-  // if (stat(url_buf->buf, &file_state))
-  // {
-  //   //文件无法打开
-  //   handle_404(db, client_addr);
-  //   free_request(request);
-  //   free_dynamic_buffer(url_buf);
-  //   return CLOSE;
-  // }
+
   set_response(db, "200", "OK");
   if (return_value == CLOSE)
   {
@@ -114,6 +112,7 @@ int handle_get(Request *request, dynamic_buffer *db, struct sockaddr_in client_a
   dbuf = (dynamic_buffer *)malloc(sizeof(dynamic_buffer *));
   init_dynamic_buffer(dbuf);
 
+  // dbuf承接文件内容
   if (!get_file_content(dbuf, url_buf))
   {
     handle_404(db, client_addr);
@@ -122,6 +121,9 @@ int handle_get(Request *request, dynamic_buffer *db, struct sockaddr_in client_a
     return CLOSE;
   }
   append_dynamic_buffer(db, dbuf->buf, dbuf->current_size);
+
+  if (return_value != PERSISTENT)
+    return CLOSE;
   return PERSISTENT;
 }
 int get_file_content(dynamic_buffer *dbuf, dynamic_buffer *url_buf)
@@ -149,9 +151,87 @@ int get_file_content(dynamic_buffer *dbuf, dynamic_buffer *url_buf)
 }
 int handle_head(Request *request, dynamic_buffer *db, struct sockaddr_in client_addr, int return_value)
 {
+  reset_dynamic_buffer(db);
+  dynamic_buffer *url_buf = (dynamic_buffer *)malloc(sizeof(dynamic_buffer *));
+  init_dynamic_buffer(url_buf);
+  char *end_url;
+  if ((end_url = strstr(request->http_uri, "?")) != NULL)
+  {
+    (*end_url) = 0;
+  }
+
+  if (!strcmp(request->http_uri, "/"))
+  { // 构造路径
+    append_dynamic_buffer(url_buf, default_path, strlen(default_path));
+    append_dynamic_buffer(url_buf, request->http_uri, strlen(request->http_uri));
+    append_dynamic_buffer(url_buf, default_file, strlen(default_file));
+  }
+  else
+  {
+    // 找不到文件
+    handle_404(db, client_addr);
+    free_request(request);
+    free_dynamic_buffer(url_buf);
+    return CLOSE;
+  }
+  set_response(db, "200", "OK");
+  if (return_value == CLOSE)
+  {
+    set_header(db, "Connection", "Close");
+  }
+  else
+  {
+    set_header(db, "Connection", "keep-alive");
+  }
+  if (return_value != PERSISTENT)
+    return CLOSE;
+  return PERSISTENT;
 }
 int handle_post(Request *request, dynamic_buffer *db, struct sockaddr_in client_addr, int return_value)
 {
+  // 将原请求报文回发
+  dynamic_buffer *new_buffer = (dynamic_buffer *)malloc(sizeof(dynamic_buffer *));
+  init_dynamic_buffer(new_buffer);
+  dynamic_buffer *url_buf = (dynamic_buffer *)malloc(sizeof(dynamic_buffer *));
+  init_dynamic_buffer(url_buf);
+  char *end_url;
+  if ((end_url = strstr(request->http_uri, "?")) != NULL)
+  {
+    (*end_url) = 0;
+  }
+
+  if (!strcmp(request->http_uri, "/"))
+  { // 构造路径
+    append_dynamic_buffer(url_buf, default_path, strlen(default_path));
+    append_dynamic_buffer(url_buf, request->http_uri, strlen(request->http_uri));
+    append_dynamic_buffer(url_buf, default_file, strlen(default_file));
+  }
+  else
+  {
+    // 找不到文件
+    handle_404(db, client_addr);
+    free_request(request);
+    free_dynamic_buffer(url_buf);
+    return CLOSE;
+  }
+  set_response(new_buffer, "200", "OK");
+  if (return_value == CLOSE)
+  {
+    set_header(new_buffer, "Connection", "Close");
+  }
+  else
+  {
+    set_header(new_buffer, "Connection", "keep-alive");
+  }
+  // 将原报文以及响应头和响应行写入db
+  append_dynamic_buffer(new_buffer, db->buf, db->current_size);
+  memset_dynamic_buffer(db);
+  append_dynamic_buffer(db, new_buffer->buf, new_buffer->current_size);
+  free_request(request);
+
+  if (return_value != PERSISTENT)
+    return CLOSE;
+  return PERSISTENT;
 }
 
 // Error Number Handler
