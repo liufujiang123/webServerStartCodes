@@ -3,9 +3,9 @@ OBJ_DIR := obj
 # all src files
 SRC := $(wildcard $(SRC_DIR)/*.c)
 # all objects
-OBJ := $(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/example.o $(OBJ_DIR)/buffer.o $(OBJ_DIR)/response.o
+OBJ := $(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/example.o $(OBJ_DIR)/buffer.o $(OBJ_DIR)/response.o $(OBJ_DIR)/log.o 
 # all yacc, lex and parse objects
-YLOOBJ :=$(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/buffer.o $(OBJ_DIR)/response.o 
+YLOOBJ :=$(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/buffer.o $(OBJ_DIR)/response.o $(OBJ_DIR)/log.o 
 # all binaries
 BIN := example liso_server liso_client
 # C compiler
@@ -33,7 +33,7 @@ $(SRC_DIR)/y.tab.c: $(SRC_DIR)/parser.y
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(OBJ_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/response.o: $(OBJ_DIR)/buffer.o
+$(OBJ_DIR)/response.o: $(OBJ_DIR)/buffer.o $(OBJ_DIR)/log.o 
 
 
 

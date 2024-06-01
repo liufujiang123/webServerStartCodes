@@ -72,47 +72,45 @@ int deal_buf(dynamic_buffer *dbuf, size_t readret, int client_sock, int sock, in
   //  返回请求执行后是否断开连接
   //  1.请求断开连接 2.服务器问题导致的断开连接
 
-  char *t = dbuf->buf, *temp = dbuf->buf;
+  // char *t = dbuf->buf, *temp = dbuf->buf;
 
   // while直接退出意味着这个请求不完整
-  while ((t = strstr(dbuf->buf, dest)) != NULL)
+
+  // debug
+  // printf("into the extract messages\n");
+  // 取出每一个完整请求(包含请求体)
+  dynamic_buffer *each = (dynamic_buffer *)malloc(sizeof(dynamic_buffer));
+  init_dynamic_buffer(each);
+
+  // size_t len = t - temp;
+  append_dynamic_buffer(each, dbuf->buf, readret);
+  // append_dynamic_buffer(each, dest, strlen(dest));
+
+  // temp = t + strlen(dest);
+  //  从请求中得到下一步的状态，将即将发送的响应报文写入each
+  int return_value = handle_request(client_sock, sock, each, cli_addr);
+
+  // 每处理一个请求就发送,即使是关闭连接请求依旧要回复响应报文
+  if (send(client_sock, each->buf, each->current_size, 0) != each->current_size)
   {
-    // debug
-    printf("into the extract messages\n");
-    // 取出每一个完整请求(包含请求体)
-    dynamic_buffer *each = (dynamic_buffer *)malloc(sizeof(dynamic_buffer));
-    init_dynamic_buffer(each);
+    // Something is wrong
+    close_socket(client_sock);
+    close_socket(sock);
+    free_dynamic_buffer(each);
+    fprintf(stderr, "ERROR Sending Back to Client\n");
 
-    size_t len = t - temp;
-    append_dynamic_buffer(each, temp, len);
-    append_dynamic_buffer(each, dest, strlen(dest));
-
-    temp = t + strlen(dest);
-    // 从请求中得到下一步的状态，将即将发送的响应报文写入each
-    int return_value = handle_request(client_sock, sock, each, cli_addr);
-
-    // 每处理一个请求就发送,即使是关闭连接请求依旧要回复响应报文
-    if (send(client_sock, each->buf, each->current_size, 0) != each->current_size)
-    {
-      // Something is wrong
-      close_socket(client_sock);
-      close_socket(sock);
-      free_dynamic_buffer(each);
-      fprintf(stderr, "ERROR Sending Back to Client\n");
-
-      return ERROR;
-    }
-    // 如果是请求报文的问题或者请求报文请求关闭连接
-    if (return_value == CLOSE || return_value == CLOSE_FROM_CLIENT)
-    {
-      free_dynamic_buffer(each);
-      // 打破循环，不再处理后续当前dbuf中的请求
-      // debug
-      printf("return_value is close\n");
-      return CLOSE;
-    }
-    update_dynamic_buffer(dbuf, temp);
+    return ERROR;
   }
+  // 如果是请求报文的问题或者请求报文请求关闭连接
+  if (return_value == CLOSE || return_value == CLOSE_FROM_CLIENT)
+  {
+    free_dynamic_buffer(each);
+    // 打破循环，不再处理后续当前dbuf中的请求
+    // debug
+    printf("return_value is close\n");
+    return CLOSE;
+  }
+  // update_dynamic_buffer(dbuf, temp);
   // while退出循环意味着1.请求不完全 2.请求没有了
 
   return PERSISTENT;
