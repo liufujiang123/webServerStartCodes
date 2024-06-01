@@ -53,8 +53,8 @@ void reset_dynamic_buffer(dynamic_buffer *db)
 }
 void update_dynamic_buffer(dynamic_buffer *db, char *src)
 {
-  db->buf = src;
   db->current_size -= (src - db->buf);
+  db->buf = src;
   while (db->capacity - DEFAULT_CAPACITY > db->current_size)
   {
     db->capacity -= DEFAULT_CAPACITY;

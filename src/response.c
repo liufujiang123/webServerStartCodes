@@ -95,6 +95,8 @@ int handle_get(Request *request, dynamic_buffer *db, struct sockaddr_in client_a
     handle_404(db, client_addr);
     free_request(request);
     free_dynamic_buffer(url_buf);
+    // debug
+    printf("it's in handle_get 404\n");
     return CLOSE;
   }
 
@@ -123,7 +125,11 @@ int handle_get(Request *request, dynamic_buffer *db, struct sockaddr_in client_a
   append_dynamic_buffer(db, dbuf->buf, dbuf->current_size);
 
   if (return_value != PERSISTENT)
+  {
+    printf("it's in handle_get's decision\n");
     return CLOSE;
+  }
+
   return PERSISTENT;
 }
 int get_file_content(dynamic_buffer *dbuf, dynamic_buffer *url_buf)

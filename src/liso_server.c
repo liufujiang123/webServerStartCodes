@@ -34,7 +34,7 @@ int close_socket(int sock)
   }
   return 0;
 }
-int extract_http_messages(char *request_begin, dynamic_buffer *dbuf, int client_sock)
+int extract_http_messages(char **request_begin, dynamic_buffer *dbuf, int client_sock)
 {
   char *t = dbuf->buf, *temp = dbuf->buf;
   int body_start = 0;
@@ -45,13 +45,21 @@ int extract_http_messages(char *request_begin, dynamic_buffer *dbuf, int client_
   t += strlen(dest);
   body_start = t - temp;
   Request *request = parse(dbuf->buf, t - temp, client_sock);
+  if (request == NULL)
+  {
+    return 1;
+  }
+  int body_length = 0;
   // 假设存在Content-Length
-  int body_length = atoi(get_header_value(request, "Content-Length"));
+  if (get_header_value(request, "Content-Length") != NULL)
+  {
+    body_length = atoi(get_header_value(request, "Content-Length"));
+  }
   if (body_length + body_start > dbuf->current_size)
   {
     return 0;
   }
-  request_begin = dbuf->buf + body_length + body_start;
+  *request_begin = dbuf->buf + body_length + body_start;
   return 1;
 }
 int deal_buf(dynamic_buffer *dbuf, size_t readret, int client_sock, int sock, int fd_in, struct sockaddr_in cli_addr)
@@ -64,16 +72,22 @@ int deal_buf(dynamic_buffer *dbuf, size_t readret, int client_sock, int sock, in
   //  返回请求执行后是否断开连接
   //  1.请求断开连接 2.服务器问题导致的断开连接
 
-  char *t, *temp = dbuf->buf;
+  char *t = dbuf->buf, *temp = dbuf->buf;
+
   // while直接退出意味着这个请求不完整
-  while (extract_http_messages(t, dbuf, client_sock))
+  while ((t = strstr(dbuf->buf, dest)) != NULL)
   {
+    // debug
+    printf("into the extract messages\n");
     // 取出每一个完整请求(包含请求体)
     dynamic_buffer *each = (dynamic_buffer *)malloc(sizeof(dynamic_buffer));
     init_dynamic_buffer(each);
+
     size_t len = t - temp;
     append_dynamic_buffer(each, temp, len);
-    temp = t;
+    append_dynamic_buffer(each, dest, strlen(dest));
+
+    temp = t + strlen(dest);
     // 从请求中得到下一步的状态，将即将发送的响应报文写入each
     int return_value = handle_request(client_sock, sock, each, cli_addr);
 
@@ -93,11 +107,14 @@ int deal_buf(dynamic_buffer *dbuf, size_t readret, int client_sock, int sock, in
     {
       free_dynamic_buffer(each);
       // 打破循环，不再处理后续当前dbuf中的请求
+      // debug
+      printf("return_value is close\n");
       return CLOSE;
     }
     update_dynamic_buffer(dbuf, temp);
   }
   // while退出循环意味着1.请求不完全 2.请求没有了
+
   return PERSISTENT;
 }
 
@@ -158,18 +175,23 @@ int main(int argc, char *argv[])
     while ((readret = recv(client_sock, buf, BUF_SIZE, 0)) >= 1)
     {
       // 持续连接缓冲区
+      // debug
+      printf("before append\n");
       append_dynamic_buffer(dbuf, buf, readret);
-
+      // debug
+      printf("it's how many times receive\n");
       // 进行解析和响应
       if (deal_buf(dbuf, readret, client_sock, sock, 8192, cli_addr) != PERSISTENT)
       {
         // 决定是否断开在这个端口的连接
         memset(buf, 0, BUF_SIZE);
+        // debug
+        printf("decide to break the circle\n");
         break;
       }
       memset(buf, 0, BUF_SIZE);
     }
-
+    printf("the while is broken\n");
     if (readret == -1)
     {
       close_socket(client_sock);
